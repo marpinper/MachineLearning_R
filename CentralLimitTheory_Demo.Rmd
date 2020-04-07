@@ -1,0 +1,62 @@
+---
+title: "Actividad 1"
+author: "Pilar Piñeiro"
+date: "21 de abril de 2016"
+output: html_document
+---
+
+#Teorema central del límite
+##Actividad 1
+
+###**Objetivo de la actividad: Análisis del teorema central del límite**###
+
+
+
+####Intro####
+
+
+If we take repeated samples from the same population under study and calculate their corresponding sample means, the distribution of this sample mean will approach a normal distribution in the limit case (when n tends to infinity). This property is what is known as the central limit theorem.
+ 
+####Procedure####
+
+
+I'm going to take 50 samples of sample size n = 5, n = 25, n = 100 and n = 2000
+using *runif()* following a uniform distribution. Next, I will calculate the mean of each of the matrices created:
+
+```{r echo=TRUE}
+#Create matrix
+n5<-matrix(runif(5),nrow=50)
+n25<-matrix(runif(25),nrow=50)
+n100<-matrix(runif(100),nrow=50)
+n2000<-matrix(runif(2000),nrow=50)
+
+#Create matrix list
+MatrixList<-list(n5,n25,n100,n2000)
+
+#Apply mean:
+MatrixList.means<-lapply(MatrixList,rowMeans)
+```
+
+The plots below show the results of the distribution of the means based on the sample size.
+
+It can be seen that with the smallest sample size, the calculated means do not show a tendency to a normal distribution. When the sample size is larger, a normal pattern begins to appear. With a sample size of 2000, the normal distribution is clearly seen.
+
+
+```{r}
+ #4 subplots
+ par(mfrow=c(2,2))
+ 
+ #Histograms
+ hist(MatrixList.means[[1]],xlim=range(0:1),main="n=5",xlab="")
+hist(MatrixList.means[[2]],xlim=range(0:1),main="n=25",xlab="")
+ hist(MatrixList.means[[3]],xlim=range(0:1),main="n=100",xlab="")
+hist(MatrixList.means[[4]],xlim=range(0:1),main="n=2000",xlab="") 
+ 
+
+```
+
+It is observable that the extent of the data decreases as the sample size increases.
+
+This is because the measure of variation (the standard deviation, or standard error of the mean) is inversely proportional to the square root of the sample size: if you want to increase the precision of the sample mean, an increase of the size of said sample will always influence.
+
+* Bibliography: Seefeld K and Linder E. Statistics Using R with Biological Examples *

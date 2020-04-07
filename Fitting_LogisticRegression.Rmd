@@ -1,0 +1,113 @@
+---
+title: "Actividad2"
+author: "Pilar Piñeiro"
+date: "6 de mayo de 2016"
+output: html_document
+---
+
+
+#Model Fitting and Logistic Regression#
+
+##Objective##
+
+Make contact with the different methods to determine the independent variables when estimating a model, see how these variables influence the AIC and ACC values and observe the difference between the two values.
+
+###Process###
+
+In this activity, logistic regression models will be estimated using different approaches to select the relevant variables that will be included in the model.
+
+
+First, the data will be loaded and the logistic regression model will be estimated using the *glm* function using all the variables in the data set. The variable * recid * will be the dependent variable of the model, while the rest of the variables in the data set will constitute the independent variables of the model.
+
+```{r eval=FALSE }
+datos<-read.table(file=paste("/Users/pilarpineiro/Google Drive/3ro/Segundo Cuatri/Mineria Datos/R/datos_icb.txt",sep=" "),header=TRUE,sep=" ",dec=".")
+ 
+rl.fit<-glm(recid ~ ., data=datos,family=binomial("logit")) 
+ 
+```
+
+This is the initial model from which the relevant variables will be selected by applying the “stepwise regression” algorithm in its “bidirectional elminination” version using the *stepAIC* function in the *MASS* package.
+
+```{r eval=FALSE}
+library(MASS)
+modFin<-stepAIC(rl.fit,direction="both")
+
+#both: se añaden y quitan variables para encontrar el mejor AIC
+```
+
+Now we will calculate the precision of the model in classification by computing the apparent ACC:
+
+In this case, we will consider that if the model response is less than 0.5, we assign the pattern to the “non-recurring” class, while if it is greater than or equal to 0.5, we assign it to the “recurring” class:
+```{r eval=FALSE}
+# calculamos la salida del modelo para cada uno de los patrones utilizados en el entrenamiento: 
+vpred<-predict(modFin, datos,type="response")
+
+
+
+
+#Función que calcula el ACC:
+ComputeACC<-function(datos,vpred){
+  cont=0;
+for(i in 1:nrow(datos)){
+ if((datos$recid[i]=="SI")&&(vpred[i]>=0.5)){ 
+    cont=cont+1
+  } else if ((datos$recid[i]=="NO")&&(vpred[i]<0.5)){
+      cont=cont+1
+     } }
+res=cont/nrow(datos)
+return(res)
+}
+
+res<-ComputeACC(datos,vpred)
+
+```
+It should be borne in mind that, although the apparent ACC value provides us with an exact value of model precision as a classifier of all the patterns in the data set, at the same time it does not allow us to affirm anything about the model's precision in the future ( that is, if we calculate the output for a different pattern than those available in the dataset used.) It is necessary to do an internal validation.
+
+
+
+### Exhaustive search ###
+
+Now we will estimate all the models corresponding to the possible combinations of the input variables, with the aim of comparing the results obtained in terms of ACC against the complete model.
+```{r eval=FALSE}
+library(hier.part)
+
+
+#Funcion de busqueda exhaustiva
+ExhaustiveSearch<-function(datos){
+
+    binary<-combos(7) #matriz con todas las posibles combinaciones con numero de variables n=7
+    models<-list() #lista de modelos creados con esas combinaciones
+  for (i in 1:nrow(binary$binary)) {
+    dataFrame<-datos[binary$binary[i,]==1]
+    dataFrame$recid<-datos$recid #Agregamos columna recid
+    model.fit<-glm(recid ~ ., data=dataFrame,family=binomial("logit"))
+    models<-c(models,list(model.fit))
+  }
+
+  #de la lista de modelos calculamos el ACC para cada modelo y lo almacenamos en lista de ACC
+  ACCres<-list()
+
+  for (z in 1:length(models)){
+ 
+    vpred<-predict(models[[z]], dataFrame,type="response")
+    res<-ComputeACC(dataFrame,vpred)
+    ACCres<-c(ACCres,list(res)) # meto cada resultado en vector
+  }
+    return(ACCres) ;
+}
+
+ACCres<-ExhaustiveSearch(datos)
+
+ind<-which.max(ACCres) #buscamos el máximo valor entre los ACC calculados 
+ 
+finalModES<-models[[ind]] #indexamos el vector y se lo asignamos al modelo final de Exhaustve Search
+
+
+```
+
+To choose the independent variables of a model we can be guided by the AIC and ACC values.
+
+As we have already seen, ACC refers to accuracy. On the other hand, AIC indicates how the independent variables explain the dependent variable. The lower it is, the less disorder there is and the better the independent variables explain that dependent variable. *StepAIC* chooses the model whose combined independent variables show the lowest AIC.
+
+We see that the previous model obtained with the *stepAIC* function had an ACC of 0.85 with the independent variables tam + grade + gang + horm, while the one obtained with exhaustive search had an ACC of 0.862 with the independent variables age + size + grade : It may be interesting, since the AIC of the model obtained with the *stepAIC* function is 366.2 and that of the model that results from the exhaustive search is 385.2 (higher than the previous one, as expected).
+

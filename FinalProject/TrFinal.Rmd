@@ -1,0 +1,685 @@
+---
+title: "Trabajo Final"
+author: "Pilar Piñeiro"
+date: "19 de junio de 2016"
+output: html_document
+---
+
+#INTRODUCTION#
+
+##Reason##
+Diffuse B-cell lymphoma (DLBCL or DLBL) is a type of B-cell cancer responsible for the production of antibodies. This is clinically heterogeneous: 40% of patients respond well to current therapy while the rest succumb to the disease.
+
+This study proposes that this variability reflects an unrecognized heterogeneity in tumors. Using DNA microarrays, gene expression has been observed in B cells. Here it is shown that there is diversity in gene expression among tumors from DLBCL patients. Two distinct molecular forms of DLBCL were identified. One type expressed characteristic germ center B cell genes (** germ center B cell lymphoma (GCB) **); the other type expressed normally induced genes (** activated B-cell-like lymphoma (ABC) **). GCB patients showed significant improvement compared to those with ABC.
+
+Thus, classification of tumors based on gene expression can identify previously unidentified cancer subtypes.
+
+##Objective##
+
+We will focus on predicting tumor classification based on the expression of certain genes.
+
+The genes that we are interested in finding and using for our prediction are those that best describe this classification. (Those that make the difference between the two tumor subtypes.)
+
+##Methodology##
+
+The study data includes 47 samples with 4027 genes observed for each sample according to the level of expression, and the subtype or class of each sample: * germline *, * activated *.
+
+We will load the data and generate a DLBCL subtype classification model using logistic regression models, neural networks (ANN), vector support machines (SVM), and decision trees (DT). We will use the area under the ROC curve as a model performance metric, and then we will compare the different models to see which one ranks best.
+
+
+#Data#
+
+We load the data that is in * arff * format.
+To avoid future problems with the code, we convert "NA" to 0.
+
+We visualize the number of data of each class:
+
+```{r warning=FALSE}
+library(foreign)
+
+data<-read.arff("/Users/pilarpineiro/Google\ Drive/3ro/Segundo\ Cuatri/Mineria\ Datos/R/TrabajoFinal/DLBCL-Stanford/DLBCL-Stanford.arff")
+data[is.na(data)] <- 0
+summary(data$Class)
+```
+
+
+# Variable selection #
+
+## Filtering and Wrapper ##
+
+We have a large number of attributes (genes), and we are interested in sticking with those that best describe the class to which each sample belongs. To do this, we will filter the data.
+
+We tried two different filters and a wrapper to see what attributes to keep to continue working on the classification models. The * FilterFeatures * function applies the desired filter to the data and returns a formula to use in the models.
+
+### We apply Filter: chi squared and information gain ###
+```{r warning=FALSE}
+library(FSelector)
+
+FilterFeatures<-function(model,data,funct){
+  weights<-funct(model,data)
+  subset<-cutoff.k(weights,4)
+  f<-as.simple.formula(subset,"Class")
+  return(f)
+}
+
+filtvbles<-FilterFeatures(Class~.,data,chi.squared)
+start.time.filter <- Sys.time()
+filtvbles2<-FilterFeatures(Class~.,data,information.gain)
+end.time.filter<- Sys.time()
+time.taken.filter<-end.time.filter - start.time.filter
+
+
+```
+
+```{r echo=FALSE}
+
+print(filtvbles)
+print(filtvbles2)
+
+
+```
+
+Since both filters return the same genes, we are going to compare the result obtained with that of a wrapper method.
+
+### We apply Wrapper: forward search ###
+
+To apply the Wrapper we need an evaluation function. We will use cross validation with logistic regression (because it does not need parameter adjustment) with AUC metrics.
+```{r echo=FALSE, warning=FALSE, message=FALSE }
+library(caret)
+library(pROC)
+CrValLRW<-function (subset){
+  folds <- createFolds(data$Class, k=10)
+  resultt<- list();
+  restest <- list();
+  
+  for(i in 1:10){
+    testData <- data[unlist(folds[i]), ] #divido la primera vez
+    trainData <- data[-unlist(folds[i]), ]
+    
+    rl.fit<-glm(as.simple.formula(subset,"Class"), data=trainData,family=binomial("logit")) # modelo con subset
+    res<-ComputeAUCLogRegr (rl.fit,testData) #calculo auc del modelo
+    restest<-c(restest,res) #meto auc en lista 
+  }
+  
+  resultt<-c(resultt,restest)
+  
+  return(mean(unlist(resultt)))
+}
+
+
+
+
+ComputeAUCLogRegr <- function(fittedmodel,testData) {
+  vpred1<-predict(fittedmodel, testData,type="response")
+  
+  obj.rl1<-auc(testData$Class,vpred1)
+  
+  return (obj.rl1)
+}
+
+```
+
+
+```{r warning=FALSE}
+
+start.time.wrapper <- Sys.time()
+subset<-forward.search(names(data)[-4027],CrValLRW)
+end.time.wrapper<- Sys.time()
+time.taken.wrapper<-end.time.wrapper - start.time.wrapper
+
+fw<-as.simple.formula(subset,"Class")
+print(fw)
+
+
+```
+
+The Wrapper method returns a different formula, so let's compare which combination of variables is better with a prediction model. We tried Decision Trees, since being one of the less good methods we can better appreciate the difference in performance between variables.
+```{r echo=FALSE}
+
+
+library(caret)
+library(rpart)
+library(pROC)
+
+
+
+ValCrDT<-function (datos,cp){
+  folds <- createFolds(datos$Class, k=10)
+  restraining <- list();
+  restest <- list();
+  for(i in 1:10){
+    testData <- datos[unlist(folds[i]), ]
+    trainData <- datos[-unlist(folds[i]), ]
+
+    
+    
+    Dt.fit<-rpart(filtvbles, data=trainData,control=rpart.control(cp=cp))
+    
+    Dt.pred1<-predict(Dt.fit,trainData,type="prob") 
+    
+    res1obj.dt<-auc(trainData$Class,Dt.pred1[,"germinal"])
+    
+  
+    Dt.pred2<-predict(Dt.fit,testData,type="prob") 
+    
+    res2obj.dt<-auc(testData$Class,Dt.pred2[,"germinal"])
+    
+    restraining<-c(restraining,res1obj.dt)
+    restest<-c(restest,res2obj.dt)
+  }
+  result<-matrix(ncol=length(restest),nrow=2)
+  
+  result[1,]<-unlist(restraining); #ambos resultados a un vector 1-training 2-test
+  result[2,]<-unlist(restest);
+  return(result)
+}
+
+
+
+
+ValCrDT_WRAPPER<-function (datos,cp){
+  folds <- createFolds(datos$Class, k=10)
+  restraining <- list();
+  restest <- list();
+  for(i in 1:10){
+    testData <- datos[unlist(folds[i]), ]
+    trainData <- datos[-unlist(folds[i]), ]
+    
+    
+    
+    Dt.fit<-rpart(fw, data=trainData,control=rpart.control(cp=cp))
+    
+    Dt.pred1<-predict(Dt.fit,trainData,type="prob") 
+    
+    res1obj.dt<-auc(trainData$Class,Dt.pred1[,"germinal"])
+    
+    
+    Dt.pred2<-predict(Dt.fit,testData,type="prob") 
+    
+    res2obj.dt<-auc(testData$Class,Dt.pred2[,"germinal"])
+    
+    restraining<-c(restraining,res1obj.dt)
+    restest<-c(restest,res2obj.dt)
+  }
+  result<-matrix(ncol=length(restest),nrow=2)
+  
+  result[1,]<-unlist(restraining); #ambos resultados a un vector 1-training 2-test
+  result[2,]<-unlist(restest);
+  return(result)
+}
+
+
+
+```
+
+
+
+```{r warning=FALSE}
+
+
+
+resWrapper<-ValCrDT_WRAPPER(data,0.07)
+
+resFilter<-ValCrDT(data,0.07)
+
+par(mfrow=c(1,2))
+boxplot(cbind(unlist(resFilter[1,]),unlist(resFilter[2,])),xlab="resFilter",ylim=c(0.4,1.5))
+boxplot(cbind(unlist(resWrapper[1,]),unlist(resWrapper[2,])),xlab="resWrapper",ylim=c(0.4,1.5))
+
+
+```
+
+The results are similar, but the computational cost of Filter is much lower. Let's see the execution times of each algorithm:
+
+```{r echo=FALSE}
+print("Tiempo Filter:")
+print(time.taken.filter)
+
+print("Tiempo Wrapper:")
+print(time.taken.wrapper)
+
+```
+In general, the Wrapper methods tend to be more exact, since they are guided by the evaluation feedback with each combination of the variables, but the difference between the results of Filter and Wrapper is not too great and it is advisable to use less time. calculation.
+
+In short, we will use the results of the Filter method:
+```{r echo=FALSE}
+print(filtvbles)
+```
+
+We have 4 variables. Attributes are numeric variables, while class is a categorical variable. Let's see how related they are. If our sample follows a normal distribution, we apply T.test. For this, the sample must have enough individuals to be representative of the study population. (The N must be large enough).
+
+```{r results="hide", warning=FALSE}
+gen1<-t.test(GENE3261X~Class,data)
+gen2<-t.test(GENE3327X~Class,data)
+gen3<-t.test(GENE3330X~Class,data)
+gen4<-t.test(GENE3328X~Class,data)
+
+```
+
+```{r}
+gen1$p.value
+gen2$p.value
+gen3$p.value
+gen4$p.value
+
+```
+
+We see that all p-values are very low: the null hypothesis in T test is rejected: the variables are then considered to be dependent, that is, the 4 variables describe the class well.
+
+# Estimation function #
+
+To estimate the models, we can use Repeated Holdout or Cross Validation. We will observe the results with both methods:
+```{r warning=FALSE, results="hide", echo=FALSE, message=FALSE}
+library(nnet)
+
+HoldOutRN<-function (datos,esq.val,s,m,d){
+  set.seed(1200)
+  obtsamples<-holdout(datos$Class,ratio=esq.val,internalsplit=TRUE,mode="stratified",iter=1,seed=NULL,window=10,increment=1)
+  trdata<-datos[obtsamples$tr,] #tomo datos para training
+  testdata<-datos[obtsamples$ts,] #tomo datos para test
+  
+  RN.fit<-nnet(filtvbles, data=trdata,size=s,maxit=m,decay=d)#estimo modelo
+  
+  vpredrn1<-predict(RN.fit, trdata,type="raw")#prediccion sobre training data
+  
+  res1obj.rn<-auc(trdata$Class,vpredrn1)
+  
+
+  vpredrn2<-predict(RN.fit, testdata,type="raw")#prediccion sobre test data
+  res2obj.rn<-auc(testdata$Class,vpredrn2)
+  
+  result<-c(res1obj.rn,res2obj.rn); #ambos resultados a un vector 1-training 2-test
+  
+  return(result)
+}
+
+
+RHoldOutRN<-function(datos,n,esq.val,s,m,d){
+  replicate(n,HoldOutRN(datos,esq.val,s,m,d))
+}
+
+library(caret)
+library(rminer)
+library(nnet)
+
+ValCrRN<-function (datos,s,m,d){
+  set.seed(1200)
+  
+  folds <- createFolds(datos$Class, k=10)
+  restraining <- list();
+  restest <- list();
+  for(i in 1:10){
+    testData <- datos[unlist(folds[i]), ]
+    trainData <- datos[-unlist(folds[i]), ]
+    
+    RN.fit<-nnet(filtvbles, data=trainData,size=s,maxit=m,decay=d)#estimo modelo
+    
+    vpredrn1<-predict(RN.fit, trainData,type="raw")#prediccion sobre training data
+    
+    res1obj.rn<-auc(trainData$Class,vpredrn1)
+  
+    vpredrn2<-predict(RN.fit, testData,type="raw")#prediccion sobre test data
+    res2obj.rn<-auc(testData$Class,vpredrn2)
+    
+    restraining<-c(restraining,res1obj.rn)
+    restest<-c(restest,res2obj.rn)
+  }
+  result<-matrix(ncol=length(restest),nrow=2)
+  
+  result[1,]<-unlist(restraining); #ambos resultados a un vector 1-training 2-test
+  result[2,]<-unlist(restest);
+  return(result)
+}
+
+
+#HOLDOUT AUC 5
+
+
+HoldOutRN_5AUC<-function (datos,esq.val,s,m,d){
+  set.seed(1200)
+  listauc1<-list()
+  listauc2<-list()
+  obtsamples<-holdout(datos$Class,ratio=esq.val,internalsplit=TRUE,mode="stratified",iter=1,seed=NULL,window=10,increment=1)
+  trdata<-datos[obtsamples$tr,] #tomo datos para training
+  testdata<-datos[obtsamples$ts,] #tomo datos para test
+  
+  RN.fit<-nnet(filtvbles, data=trdata,size=s,maxit=m,decay=d)#estimo modelo
+  
+  vpredrn1<-predict(RN.fit, trdata,type="raw")#prediccion sobre training data
+  for(j in 1:5){
+    repres1<-Computeauc(trdata,vpredrn1)
+    listauc1<-c(listauc1,repres1)
+    
+  }
+  
+  res1obj.rn<-mean(unlist(listauc1))
+  
+  
+  
+  vpredrn2<-predict(RN.fit, testdata,type="raw")#prediccion sobre test data
+  for(z in 1:5){
+  repres2<-Computeauc(testdata,vpredrn2)
+  listauc2<-c(listauc2,repres2)
+ 
+  }
+  
+  res2obj.rn<-mean(unlist(listauc2))
+  
+  result<-c(res1obj.rn,res2obj.rn) #ambos resultados a un vector 1-training 2-test
+  
+  return(result)
+}
+
+
+RHoldOutRN_5AUC<-function(datos,n,esq.val,s,m,d){
+  replicate(n,HoldOutRN_5AUC(datos,esq.val,s,m,d))
+}
+
+
+Computeauc<-function(data,vpredrn2){
+  res<-auc(data$Class,vpredrn2)
+  return(res)
+}
+
+```
+###Repeated Holdout###
+Este método requiere repetir la función Holdout un número elevado de veces para conseguir un resultado lo más realista posible. Vamos a probar si repitiendolo 150 veces nos devuelve el mismo resultado que si lo aplicamos 30 veces pero repitiendo en el Holdout el AUC 5 veces, y luego usando la media de esos 5 resultados:
+
+```{r warning=FALSE, message=FALSE, results="hide"}
+res_5AUC<-RHoldOutRN_5AUC(data,30,2/3,5,100,4e-1)
+res_150<-RHoldOutRN(data,150,2/3,5,100,4e-1)
+
+print(mean(res_5AUC[1,]))
+print(mean(res_5AUC[2,]))
+print(mean(res_150[1,]))
+print(mean(res_150[2,])) 
+
+par(mfrow=c(1,2))
+boxplot(cbind(unlist(res_5AUC[1,]),unlist(res_5AUC[2,])),xlab="AUC 5 veces y RHoldout 30 veces",ylim=c(0.4,1.5))
+boxplot(cbind(unlist(res_150[1,]),unlist(res_150[2,])),xlab="RHoldout 150 veces",ylim=c(0.4,1.5))
+
+
+```
+
+Indeed, the result is the same.
+
+
+###Comparison###
+
+Let's compare the results with Repeated Holdout and with Cross Validation using Neural Networks and evaluation with AUC metrics.
+
+```{r warning=FALSE , results="hide"}
+
+
+start.time.RHold<- Sys.time()
+resRHoldout<-RHoldOutRN(data,30,2/3,5,1100,5e-4)
+end.time.RHold<- Sys.time()
+time.taken.RHold<-end.time.RHold - start.time.RHold
+
+start.time.CV<- Sys.time()
+resValCr<-ValCrRN(data,5,1100,5e-4)
+end.time.CV<- Sys.time()
+time.taken.CV<-end.time.CV - start.time.CV
+
+
+
+```
+
+
+```{r Warning=FALSE}
+par(mfrow=c(1,2))
+boxplot(cbind(unlist(resRHoldout[1,]),unlist(resRHoldout[2,])),xlab=" Repeated Holdout",ylim=c(0,1.5))
+boxplot(cbind(unlist(resValCr[1,]),unlist(resValCr[2,])),xlab="Cross Validation",ylim=c(0,1.5))
+
+```
+
+The results are similar. Neural Networks is a good method, and we are using variables that describe the Class variable well: that's why you don't see much of a difference.
+
+The computation time using each one is as follows:
+
+```{r echo=FALSE}
+print("Repeated Holdout:")
+print(time.taken.RHold)
+
+print("Cross Validation:")
+print(time.taken.CV)
+```
+
+We see that Cross Validation requires less time; we need 10 iterations. With Repeated Holdout instead we need 30 iterations.
+
+
+
+# Method comparison #
+
+We are going to estimate logistic regression models, ANN, SVM and decision trees. We will compare the results based on the AUC in generalization. Unlike ACC, AUC allows us to assess regardless of where the threshold is (unbalanced classes).
+
+
+```{r echo=FALSE, warning=FALSE}
+
+#REGRESION LOGISTICA
+ValCrRL<-function (datos){
+  
+  folds <- createFolds(datos$Class, k=10)
+  restest <- list();
+  restr<-list();
+  for(i in 1:10){
+    testData <- datos[unlist(folds[i]), ]
+    trainData <- datos[-unlist(folds[i]), ]
+
+     rl.fit<-glm(filtvbles, data=trainData,family=binomial("logit")) 
+    
+    
+    res1<-ComputeAUCLogRegr(rl.fit,trainData) 
+    
+    restr<-c(restr,res1)  
+   
+    res<-ComputeAUCLogRegr(rl.fit,testData) 
+    restest<-c(restest,res) 
+   
+  }
+  result<-matrix(ncol=length(restest),nrow=2)
+  result[1,]<-unlist(restr);
+  result[2,]<-unlist(restest);
+  return(result)
+}
+
+
+ComputeAUCLogRegr <- function(fittedmodel,datas) {
+  
+  vpred1<-predict(fittedmodel,newdata=datas,type="response")
+
+  obj.rl1<-roc(datas$Class,vpred1)
+  
+  return (obj.rl1$auc)
+}
+
+
+
+
+#SUPPORT VECTOR MACHINE
+
+
+library(e1071)
+library(caret)
+library(pROC)
+library(FSelector)
+
+
+ValCrSVM<-function (datos,c,g,p){
+  
+  folds <- createFolds(datos$Class, k=10)
+  restraining <- list();
+  restest <- list();
+  for(i in 1:10){
+    testData <- datos[unlist(folds[i]), ]
+    trainData <- datos[-unlist(folds[i]), ]
+    
+    
+    svm.fit <- svm(filtvbles, data=trainData, cost = c, gamma =g, probability=p)
+    
+    pred1 <- predict(svm.fit,trainData,probability=p)
+    
+    svm.pred1 <- attr(pred1, which="probabilities")[,"germinal"]
+    
+    svmrestr<-auc(cases=as.numeric(trainData$Class),control=as.numeric(svm.pred1))
+    
+    pred2 <- predict(svm.fit,testData,probability=p)
+    
+    svm.pred2 <- attr(pred2, which="probabilities")[,"germinal"]
+    
+    svmrestst<-auc(cases=as.numeric(testData$Class),control=as.numeric(svm.pred2))
+    
+    restraining<-c(restraining,svmrestr)
+    restest<-c(restest,svmrestst)
+  }
+  result<-matrix(ncol=length(restest),nrow=2)
+  
+  result[1,]<-unlist(restraining); #ambos resultados a un vector 1-training 2-test
+  result[2,]<-unlist(restest);
+  
+  return(result)
+}
+
+#REDES NEURONALES
+
+library(caret)
+library(rminer)
+library(nnet)
+
+ValCrRN<-function (datos,s,m,d){
+  set.seed(1200)
+  
+  folds <- createFolds(datos$Class, k=10)
+  restraining <- list();
+  restest <- list();
+  for(i in 1:10){
+    testData <- datos[unlist(folds[i]), ]
+    trainData <- datos[-unlist(folds[i]), ]
+    
+    RN.fit<-nnet(filtvbles, data=trainData,size=s,maxit=m,decay=d)#estimo modelo
+    
+    vpredrn1<-predict(RN.fit, trainData,type="raw")#prediccion sobre training data
+    
+    res1obj.rn<-auc(trainData$Class,vpredrn1)
+  
+    vpredrn2<-predict(RN.fit, testData,type="raw")#prediccion sobre test data
+    res2obj.rn<-auc(testData$Class,vpredrn2)
+    
+    restraining<-c(restraining,res1obj.rn)
+    restest<-c(restest,res2obj.rn)
+  }
+  result<-matrix(ncol=length(restest),nrow=2)
+  
+  result[1,]<-unlist(restraining); #ambos resultados a un vector 1-training 2-test
+  result[2,]<-unlist(restest);
+  return(result)
+}
+
+
+```
+
+Probando con los modelos debemos tener en cuenta:
+
+* El ajuste de parámetros en una red neuronal artificial es crítico para la obtención de buenos resultados en generalización. Para ello escogemos la mejor de las diferentes tipos de arquitecturas que produce mejores resultados en cuanto al AUC del clasificador.
+**Decay**: procedimiento para evitar el problema típico en ajuste de este tipo de modelos que es el sobreentrenamiento. La "caída" del error de entrenamiento provoca caída de capacidad de generalización. 
+
+* En el caso de SVM, probamos diferentes valores para cost y gamma.
+
+* Para Decision Trees hemos ido variando la profundidad del árbol. Tuvimos en cuenta que aumentar mucho la profundidad puede provocar overfitting.
+
+
+Vamos a compararlos entre sí:
+
+```{r warning=FALSE, echo=FALSE, results="hide"}
+
+#Redes Neuronales
+start.time.RN <- Sys.time()
+rescrval<-ValCrRN(data,5,1100,5e-4)
+end.time.RN<- Sys.time()
+time.taken.RN<-end.time.RN - start.time.RN
+
+mean(rescrval[2])
+
+#Regresion Logistica
+start.time.RL <- Sys.time()
+reglogcrval<-ValCrRL(data)
+end.time.RL<- Sys.time()
+time.taken.RL<-end.time.RL - start.time.RL
+mean(rescrval[2])
+
+#Support Vector Machine
+start.time.SVM <- Sys.time()
+svmcrval<-ValCrSVM(data,1900,0.7,TRUE)
+end.time.SVM<- Sys.time()
+time.taken.SVM<-end.time.SVM - start.time.SVM
+
+mean(rescrval[2])
+
+#Decision Trees
+start.time.DT <- Sys.time()
+DTcrval<-ValCrDT(data,0.06)
+end.time.DT<- Sys.time()
+time.taken.DT<-end.time.DT - start.time.DT
+
+mean(rescrval[2])
+
+
+
+
+```
+
+
+```{r warning=FALSE, eval=FALSE}
+
+#Redes Neuronales
+rescrval<-ValCrRN(data,5,1100,5e-4)
+mean(rescrval[2])
+
+#Regresion Logistica
+reglogcrval<-ValCrRL(data)
+
+#Support Vector Machine
+svmcrval<-ValCrSVM(data,1900,0.7,TRUE)
+
+#Decision Trees
+DTcrval<-ValCrDT(data,0.06)
+
+
+
+
+```
+
+
+```{r}
+
+par(mfrow=c(2,2))
+boxplot(cbind(unlist(rescrval[1,]),unlist(rescrval[2,])),xlab=" REDES NEURONALES",ylim=c(0,1.5))
+boxplot(cbind(unlist(reglogcrval[1,]),unlist(reglogcrval[2,])),xlab=" REGRESION LOGISTICA",ylim=c(0,1.5))
+boxplot(cbind(unlist(svmcrval[1,]),unlist(svmcrval[2,])),xlab="SUPPORT VECTOR MACHINE",ylim=c(0,1.5))
+boxplot(cbind(unlist(DTcrval[1,]),unlist(DTcrval[2,])),xlab="DECISION TREES",ylim=c(0,1.5))
+
+```
+
+
+All the models are very good in classification because the chosen variables are closely related to the Class variable. Decision Trees is the only one that is worse to rank.
+Let's see the execution time for each model:
+
+```{r}
+par(mfrow=c(1,1))
+times<-c(as.numeric(time.taken.DT),as.numeric(time.taken.RN),as.numeric(time.taken.SVM),as.numeric(time.taken.RL))
+barplot(times, xlab="COMPARACIÓN DE TIEMPOS",names.arg=c("DT", "RN","SVM","RL"))
+
+
+```
+
+We see that SVM is very efficient in terms of computation time and classification capacity, making it the best prediction model for our study data.
+
+
+#Conclusion#
+
+The two subgroups of DLBCL are distinguished from each other by the differential expression of hundreds of genes, and these genes relate each subgroup to a different stage of activation and differentiation of B cells. These molecular differences, accompanied by clinical differences between the two subgroups , suggest that these two subtypes of DLBCL should be considered different diseases.
+
+Therefore, its correct classification is very important. By using Support Vector Machine and selecting the most representative variables for the class in question we can speed up the classification and ensure that the least mistake possible is made.
+
+
+

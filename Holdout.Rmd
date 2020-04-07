@@ -1,0 +1,401 @@
+---
+title: "Actividad 3"
+author: "Pilar Piñeiro"
+date: "5 de mayo de 2016"
+output: html_document
+---
+
+#Holdout method#
+
+
+With the best combination of variables obtained from stepAIC and with the best we have found with exhaustive search (according to ACC), we will calculate how much the ACC is worth in prediction with the ** repeated holdout **.
+
+In the previous exercise, two different models were obtained: modFin and finalModES
+```{r echo=FALSE ,results="hide"}
+
+datos<-read.table(file=paste("/Users/pilarpineiro/Google Drive/3ro/Segundo Cuatri/Mineria Datos/R/datos_icb.txt",sep=" "),header=TRUE,sep=" ",dec=".")
+ 
+rl.fit<-glm(recid ~ ., data=datos,family=binomial("logit")) 
+ library(MASS)
+modFin<-stepAIC(rl.fit,direction="both")
+
+
+vpred<-predict(modFin, datos,type="response")
+
+
+#Función que usaremos para calcular el ACC:
+ComputeACC<-function(datos,vpred){
+  cont=0;
+for(i in 1:nrow(datos)){
+ if((datos$recid[i]=="SI")&&(vpred[i]>=0.5)){ 
+    cont=cont+1
+  } else if ((datos$recid[i]=="NO")&&(vpred[i]<0.5)){
+      cont=cont+1
+     } }
+res=cont/nrow(datos)
+return(res)
+}
+
+res<-ComputeACC(datos,vpred)
+
+
+library(hier.part)
+
+
+#Funcion de busqueda exhaustiva
+ExhaustiveSearch<-function(datos){
+
+    binary<-combos(7) #matriz con todas las posibles combinaciones con numero de variables n=7
+    models<-list() #lista de modelos creados con esas combinaciones
+  for (i in 1:nrow(binary$binary)) {
+    dataFrame<-datos[binary$binary[i,]==1]
+    dataFrame$recid<-datos$recid #Agregamos columna recid
+    model.fit<-glm(recid ~ ., data=dataFrame,family=binomial("logit"))
+    models<-c(models,list(model.fit))
+  }
+
+  #de la lista de modelos calculamos el ACC para cada modelo y lo almacenamos en lista de ACC
+  ACCres<-list()
+
+  for (z in 1:length(models)){
+ 
+    vpred<-predict(models[[z]], dataFrame,type="response")
+    res<-ComputeACC(dataFrame,vpred)
+    ACCres<-c(ACCres,list(res)) # meto cada resultado en vector
+  }
+    return(ACCres) ;
+}
+
+    binary<-combos(7) #matriz con todas las posibles combinaciones con numero de variables n=7
+    models<-list() #lista de modelos creados con esas combinaciones
+  for (i in 1:nrow(binary$binary)) {
+    dataFrame<-datos[binary$binary[i,]==1]
+    dataFrame$recid<-datos$recid #Agregamos columna recid
+    model.fit<-glm(recid ~ ., data=dataFrame,family=binomial("logit"))
+    models<-c(models,list(model.fit))
+  }
+
+ACCres<-ExhaustiveSearch(datos)
+
+ind<-which.max(ACCres) #buscamos el máximo valor entre los ACC calculados 
+ 
+#finalModES<-models[[ind]] #indexamos el vector y se lo asignamos al modelo final de Exhaustve Search
+finalModES<-models[[29]]
+
+```
+
+To calculate the HoldOut, the method of the previous exercise will be used to calculate the ACC.
+
+When calculating the HoldOut there are two options: we can say that it is ** stratified ** or not. For this, a boolean is added as a parameter to the function that will decide which way to divide the data between test and training will be used. If ** stratified ** is TRUE, the ** holdout ** function of the ** rminer ** package will be used: this function takes as a first parameter a vector with the labels of the class to which each pattern of the dataset, and returns a list with the training and test pattern indices. One of the important characteristics of this function is that the division of the sets is carried out in a stratified way, that is, it generates training and test sets trying to respect the distribution of patterns of each class in the complete data set.
+
+```{r warning=FALSE} 
+
+#Función que usaremos para calcular el ACC
+ComputeACCs<-function(data,vpred){
+  ACCres<-list()
+ cont=0;
+for(j in 1:nrow(data)){
+  if((data$recid[j]=="SI")&&(vpred[j]>=0.5)){ 
+    cont=cont+1
+  } else if ((data$recid[j]=="NO")&&(vpred[j]<0.5)){
+      cont=cont+1
+  }  
+
+}
+   ACCres<-c(ACCres,list(cont/nrow(data)))#calculo accuracy y meto en vector
+return(ACCres);
+  
+}
+
+
+#HOLDOUT
+
+HoldOut<-function (datos,modeloSeleccionado,esq.val,estrat){
+ 
+  if (estrat==TRUE){
+    obtsamples<-holdout(datos$recid,ratio=esq.val,internalsplit=TRUE,mode="stratified",iter=1,seed=NULL,window=10,increment=1)
+
+trdata<-datos[obtsamples$tr,] #tomo datos para training
+testdata<-datos[obtsamples$ts,] #tomo datos para test
+
+  }else{
+   ind<-sample(nrow(datos),nrow(datos)*esq.val)# output: todas las posibles combinaciones
+trdata<-datos[ind,]#tomo datos para training
+testdata<-datos[-ind,]#tomo datos para test
+ }
+
+  
+  rl.fit1<-glm(modeloSeleccionado, data=trdata,family=binomial("logit"))#estimo modelo
+  
+  vpred1<-predict(rl.fit1, trdata,type="response")#prediccion sobre training data
+  
+  ACCrestr<-ComputeACCs(trdata,vpred1)
+  
+  #calculo accuracy para testdata
+  rl.fit2<-glm(modeloSeleccionado, data=testdata,family=binomial("logit"))#estimo modelo
+  
+  vpred2<-predict(rl.fit2, testdata,type="response")#prediccion sobre test data
+  
+  ACCrestest<-ComputeACCs(testdata,vpred2)
+
+  resultACC<-c(ACCrestest,ACCrestr) #ambos resultados a un vector
+  
+  return(resultACC)
+}
+
+```
+
+
+But the HoldOut method can present two problems: that reserving data for testing reduces the number of cases used for training, and that an “unfortunate” random division of the data set can lead to a pessimistic estimate of ACC. To solve this problem, “resampling” techniques are used, which used on HoldOut allow to implement the method known as “** Repeated HoldOut **”.
+
+
+```{r warning=FALSE} 
+library(rminer)
+#El repeated Holdout calcula el Holdout n veces
+
+RHoldOut<-function(modeloSeleccionado,datos,n,esq.val,estrat){
+ replicate(n,HoldOut(datos,modeloSeleccionado,esq.val,estrat))
+}
+  
+#Calculamos RHoldout para los dos mejores modelos que tenemos de las actividades anteriores:
+#Estratificado:
+resStepAICmodE<-RHoldOut(modFin,datos,30,2/3,TRUE)
+
+resExSemodE<-RHoldOut(finalModES,datos,30,2/3,TRUE)
+
+#No estratificado:
+resStepAICmod<-RHoldOut(modFin,datos,30,2/3,FALSE)
+
+resExSemod<-RHoldOut(finalModES,datos,30,2/3,FALSE)
+
+#Calculamos las medias 
+(meanHoldoutACCAICtest<-mean(unlist(resStepAICmod[1,])))
+(meanHoldoutACCAICtrain<-mean(unlist(resStepAICmod[2,])))
+(meanHoldoutACCExSetest<-mean(unlist(resExSemod[1,]))) 
+(meanHoldoutACCExSetrain<-mean(unlist(resExSemod[2,]))) 
+(meanHoldoutACCAICtestE<-mean(unlist(resStepAICmodE[1,])))
+(meanHoldoutACCAICtrainE<-mean(unlist(resStepAICmodE[2,])))
+(meanHoldoutACCExSetestE<-mean(unlist(resExSemodE[1,]))) 
+(meanHoldoutACCExSetrainE<-mean(unlist(resExSemodE[2,]))) 
+
+
+
+#Mostramos el boxplot para visualizar la distribución de los datos
+par(mfrow=c(2,2))
+
+boxplot(cbind(unlist(resStepAICmod[1,]),unlist(resStepAICmod[2,])),xlab="StepAIC no estratificado",ylim=c(0.80,0.90))
+boxplot(cbind(unlist(resExSemod[1,]),unlist(resExSemod[2,])),xlab="resExSe no estratificado",ylim=c(0.80,0.90))
+boxplot(cbind(unlist(resStepAICmodE[1,]),unlist(resStepAICmodE[2,])),xlab="StepAIC estratificado",ylim=c(0.80,0.90))
+boxplot(cbind(unlist(resExSemodE[1,]),unlist(resExSemodE[2,])),xlab="resExSe  estratificado",ylim=c(0.80,0.90))
+
+
+
+```
+1-test data
+2-training data
+
+It can be seen that for the data divided by the stratified HoldOut the variance decreases markedly. The distribution is more adjusted in the training data than in the prediction data. It can be seen at a glance that the training data is number 2, (lower, since training is more accurate and complex than predicting, which can occupy more values.)
+
+We will see how the normal distribution varies by representing in histograms the mean values obtained after changing the value of n for a single model with stratified = TRUE:
+```{r warning=FALSE}
+
+RHoldOut1<-function(modeloSeleccionado,datos,n,esq.val,estrat){
+ replicate(30,HoldOut(datos,modeloSeleccionado,esq.val,estrat))
+}
+RHoldOut2<-function(modeloSeleccionado,datos,n,esq.val,estrat){
+ replicate(50,HoldOut(datos,modeloSeleccionado,esq.val,estrat))
+}
+RHoldOut3<-function(modeloSeleccionado,datos,n,esq.val,estrat){
+ replicate(200,HoldOut(datos,modeloSeleccionado,esq.val,estrat))
+}
+resStepAICmodE1<-RHoldOut1(modFin,datos,30,2/3,TRUE)
+
+
+resStepAICmodE2<-RHoldOut2(modFin,datos,30,2/3,TRUE)
+
+
+resStepAICmodE3<-RHoldOut3(modFin,datos,30,2/3,TRUE)
+
+par(mfrow=c(2,2)) 
+
+hist(as.numeric(resStepAICmodE1),xlab="n=30")
+hist(as.numeric(resStepAICmodE2),xlab="n=50")
+hist(as.numeric(resStepAICmodE3),xlab="n=200")
+
+
+```
+ 
+ Repeated Holdout provides the average ACC in generalization. We find that just as n increases, the distribution tends to a normal distribution: the central limit theorem for this general estimator holds.
+
+It is interesting to observe the result if we change the esq.value, we are going to see it for esq.value = 3/4:
+```{r}
+
+resStepAICmodEa<-RHoldOut(modFin,datos,30,2/3,TRUE)
+resStepAICmodEb<-RHoldOut(modFin,datos,30,3/4,TRUE)
+
+par(mfrow=c(1,2))
+boxplot(cbind(unlist(resStepAICmodEa[1,]),unlist(resStepAICmodEa[2,])),xlab="esq.value=2/3",ylim=c(0.80,0.90))
+boxplot(cbind(unlist(resStepAICmodEb[1,]),unlist(resStepAICmodEb[2,])),xlab="esq.value=3/4",ylim=c(0.80,0.90))
+
+
+```
+
+We can see that when a division is made with 3/4 for training and 1/4 for test (first graph) the prediction with 1/4 is smaller, and the increase in data for training is noted.
+When the data is very far from the mean, the data division is not well done.
+
+
+# RHoldout calculation with AUC #
+
+To calculate with the AUC we are going to modify the HoldOut function: in this function, we add a parameter that is to decide if you want to calculate the holdout with AUC or ACC.
+```{r}
+
+library(pROC)
+HoldOut<-function (datos,modeloSeleccionado,esq.val,estrat,espMethod){
+  
+  if (estrat==TRUE){
+    obtsamples<-holdout(datos$recid,ratio=esq.val,internalsplit=TRUE,mode="stratified",iter=1,seed=NULL,window=10,increment=1)
+    
+    trdata<-datos[obtsamples$tr,] #tomo datos para training
+    testdata<-datos[obtsamples$ts,] #tomo datos para test
+    
+  }else{
+    ind<-sample(nrow(datos),nrow(datos)*esq.val)# output: todas las posibles combinaciones
+    trdata<-datos[ind,]#tomo datos para training
+    testdata<-datos[-ind,]#tomo datos para test
+  }
+  
+  if(espMethod=="ACC"){
+  
+  rl.fit1<-glm(modeloSeleccionado, data=trdata,family=binomial("logit"))#estimo modelo
+  
+  vpred1<-predict(rl.fit1, trdata,type="response")#prediccion sobre training data
+  
+  ACCrestr<-ComputeACCs(trdata,vpred1)
+  
+  #calculo accuracy para testdata
+  rl.fit2<-glm(modeloSeleccionado, data=testdata,family=binomial("logit"))#estimo modelo
+  
+  vpred2<-predict(rl.fit2, testdata,type="response")#prediccion sobre test data
+  
+  ACCrestest<-ComputeACCs(testdata,vpred2)
+  
+  result<-c(ACCrestr,ACCrestest) #ambos resultados a un vector
+  
+  }else{
+    
+    rl.fit1<-glm(modeloSeleccionado, data=trdata,family=binomial("logit"))#estimo modelo
+    
+    vpred1<-predict(rl.fit1, trdata,type="response")#prediccion sobre training data
+    
+    res1obj.roc<-roc(trdata$recid,vpred1,smooth=FALSE,auc=TRUE)
+    
+    
+    rl.fit2<-glm(modeloSeleccionado, data=testdata,family=binomial("logit"))#estimo modelo
+    
+    vpred2<-predict(rl.fit2, testdata,type="response")#prediccion sobre test data
+    
+    res2obj.roc<-roc(testdata$recid,vpred2,smooth=FALSE,auc=TRUE)
+    
+    result<-c(res1obj.roc$auc,res2obj.roc$auc) #ambos resultados a un vector 1-training 2-test
+  }
+  return(result)
+  
+}
+
+
+
+
+
+RHoldOut<-function(modeloSeleccionado,datos,n,esq.val,estrat,espMethod){
+  replicate(n,HoldOut(datos,modeloSeleccionado,esq.val,estrat,espMethod))
+}
+
+resultAUCEstrat<-RHoldOut(modFin,datos,30,2/3,TRUE,"AUC")
+resultACCEstrat<-RHoldOut(modFin,datos,30,2/3,TRUE,"ACC")
+
+par(mfrow=c(1,2))
+boxplot(cbind(unlist(resultAUCEstrat[1,]),unlist(resultAUCEstrat[2,])),xlab="Modelo StepAIC estratificado AUC",ylim=c(0.7,0.9))
+boxplot(cbind(unlist(resultACCEstrat[1,]),unlist(resultACCEstrat[2,])),xlab="Modelo StepAIC estratificado ACC",ylim=c(0.7,0.9))
+
+(meanresultAUCEstrattest<-mean(unlist(resultAUCEstrat[1,])))
+(meanresultAUCEstrattrain<-mean(unlist(resultAUCEstrat[2,])))
+(meanresultACCEstrattest<-mean(unlist(resultACCEstrat[1,])))
+(meanresultACCEstrattrain<-mean(unlist(resultACCEstrat[2,])))
+
+
+
+```
+
+Boxplot: vemos que el resultado para el cálculo con ACC es mejor, porque las clases estan muy desbalanceadas.
+
+Vamos a calcular el mejor modelo mediante busqueda exhaustiva pero usando el AUC:
+
+```{r }
+library(pROC)
+library(hier.part)
+ExhaustiveSearchAUC<-function(datos){
+  
+  binary<-combos(7) #matriz con todas las posibles combinaciones con numero de variables n=7
+  models<-list() #lista de modelos creados con esas combinaciones
+  for (i in 1:nrow(binary$binary)) {
+    dataFrame<-datos[binary$binary[i,]==1]
+    dataFrame$recid<-datos$recid #Agregamos columna recid
+    model.fit<-glm(recid ~ ., data=dataFrame,family=binomial("logit"))
+    models<-c(models,list(model.fit))
+  }
+  
+  #de la lista de modelos calculamos el AuC para cada modelo y lo almacenamos en lista de AuC
+  AUCres<-list()
+  
+  for (z in 1:length(models)){
+    
+    vpred<-predict(models[[z]], dataFrame,type="response")
+    res<-roc(dataFrame$recid,vpred,smooth=FALSE,auc=TRUE)
+    AUCres<-c(AUCres,list(res$auc)) # meto cada resultado en vector
+    
+  }
+  return(AUCres) ;
+}
+resESAUC<-ExhaustiveSearchAUC(datos)
+ind1<-which.max(resESAUC)
+ind1
+modelAUC<-models[[ind1]]
+
+```
+
+
+We see that the best model we obtain in this way is another: it is the complete model, with all the variables.
+We are going to apply RHoldout with both ACC and AUC:
+```{r}
+library(rminer)
+library(pROC)
+resultAUC<-RHoldOut(modelAUC,datos,30,2/3,TRUE,"AUC")
+
+(meanresultAUCtrain<-mean(unlist(resultAUC[1,]),xlab="training"))
+(meanresultAUCtest<-mean(unlist(resultAUC[2,]),xlab="test"))
+
+resultACC1<-RHoldOut(modelAUC,datos,30,2/3,TRUE,"ACC")
+
+(meanresultACCtrain<-mean(unlist(resultACC1[1,]),xlab="training"))
+(meanresultACCtest<-mean(unlist(resultACC1[2,]),xlab="test"))
+
+
+```
+
+We see that applying AUC the calculated model classification efficiency is lower. This is because the threshold is changed, so even if the class is unbalanced, the calculation of the efficiency of the model will not be affected by it: it is independent of where the threshold is.
+
+We are going to visualize the ROC curve for the best model according to AUC and we are going to compare it with the best model obtained with an exhaustive search with ACC:
+```{r}
+library(rminer)
+library(pROC)
+vpredAUC<-predict(modelAUC, datos,type="response")
+    resAUCobj<-roc(datos$recid,vpredAUC,smooth=FALSE,auc=TRUE)
+
+
+vpredACC<-predict(finalModES, datos,type="response")
+resACCobj<-roc(datos$recid,vpredACC,smooth=FALSE,auc=TRUE)
+par(mfrow=c(1,2))
+plot(resACCobj)
+plot(resAUCobj)
+```
+We see that the AUC of the model that we obtained by exhaustive search with the AUC is better: 0.7993

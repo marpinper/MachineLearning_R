@@ -1,0 +1,6 @@
+README
+--------------
+
+- Central limit theorem demonstration
+- Basic Logistic Regression model fitting and testing 
+- Bioinformatics exploratory project that involves feature selection (filter vs wrapper comparison), cross validation and holdout, different algorithm fitting, metric comparison.
